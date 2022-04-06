@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/gofrs/uuid"
 	"github.com/meghashyamc/auth/models"
+	"github.com/meghashyamc/auth/services/email"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -39,14 +41,73 @@ func (l *HTTPListener) registerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	registerReq.Password = nil
 
-	if err := l.dbClient.CreateUser(registerReq); err != nil {
+	userID, err := l.dbClient.CreateUser(registerReq)
+	if err != nil {
 		writeResponse(w, http.StatusInternalServerError, false, []string{"error creating new user"}, nil)
 		return
 	}
 
-	writeResponse(w, http.StatusOK, true, []string{}, map[string]string{"message": "user created successfully"})
+	writeResponse(w, http.StatusOK, true, []string{}, map[string]string{"user_id": userID.String(), "message": "user created successfully"})
 	return
 }
+
+func (l *HTTPListener) sendConfirmationMailHandler(w http.ResponseWriter, r *http.Request) {
+
+	sendConfirmMailReq := &models.SendConfirmMailRequest{}
+	if err := json.NewDecoder(r.Body).Decode(sendConfirmMailReq); err != nil {
+		log.WithFields(log.Fields{"err": err.Error()}).Error("could not unmarshal request body")
+		writeResponse(w, http.StatusBadRequest, false, []string{"could not unmarshal request body"}, nil)
+		return
+	}
+	defer r.Body.Close()
+
+	if err := l.validate.Struct(sendConfirmMailReq); err != nil {
+		log.WithFields(log.Fields{"err": err.Error()}).Info("request validation failed")
+		writeResponse(w, http.StatusBadRequest, false, getValidationErrors(err), nil)
+		return
+	}
+	errSendingConfirmMail := "failed to send a confirmation mail"
+
+	userFound, user, err := l.dbClient.GetUserByID(forceUUIDFromString(sendConfirmMailReq.ID))
+	if err != nil {
+		writeResponse(w, http.StatusInternalServerError, false, []string{errSendingConfirmMail}, nil)
+		return
+	}
+
+	if !userFound {
+		writeResponse(w, http.StatusNotFound, false, []string{fmt.Sprintf("no user exists corresponding to the ID sent %s", sendConfirmMailReq.ID)}, nil)
+		return
+	}
+
+	confirmationToken, confirmationLink, err := generateConfirmationLink(user.ID)
+	if err != nil {
+		writeResponse(w, http.StatusInternalServerError, false, []string{errSendingConfirmMail}, nil)
+		return
+	}
+
+	tokenValidity, err := getTokenValidity()
+	if err != nil {
+		writeResponse(w, http.StatusInternalServerError, false, []string{errSendingConfirmMail}, nil)
+		return
+	}
+
+	if err := l.dbClient.UpdateUserConfirmationToken(user.ID, confirmationToken, tokenValidity); err != nil {
+		writeResponse(w, http.StatusInternalServerError, false, []string{errSendingConfirmMail}, nil)
+		return
+	}
+
+	if err := email.Send(*user.Email, email.GetConfirmationEmailContent(confirmationLink)); err != nil {
+		writeResponse(w, http.StatusInternalServerError, false, []string{errSendingConfirmMail}, nil)
+		return
+	}
+
+	l.dbClient.UpdateUserConfirmationMailSent(user.ID)
+
+	writeResponse(w, http.StatusOK, true, []string{}, map[string]string{"message": "confirmation mail sent successfully"})
+	return
+}
+
+func (l *HTTPListener) confirmUserHandler(w http.ResponseWriter, r *http.Request) {}
 func (l *HTTPListener) loginHandler(w http.ResponseWriter, r *http.Request) {
 
 	loginReq := models.LoginRequest{}
@@ -110,4 +171,10 @@ func (l *HTTPListener) loginUser(id string) (string, error) {
 
 	return token, nil
 
+}
+
+func forceUUIDFromString(s string) uuid.UUID {
+
+	gottenUUID, _ := uuid.FromString(s)
+	return gottenUUID
 }

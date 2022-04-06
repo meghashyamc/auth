@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/gofrs/uuid"
 	"github.com/meghashyamc/auth/models"
 	log "github.com/sirupsen/logrus"
 	"gorm.io/driver/postgres"
@@ -33,17 +34,17 @@ func NewClient() (*DBClient, error) {
 	return &DBClient{db: db}, nil
 }
 
-func (dbc *DBClient) CreateUser(user *models.User) error {
+func (dbc *DBClient) CreateUser(user *models.User) (uuid.UUID, error) {
 	timeNowUTC := time.Now().UTC()
 	user.CreatedAt = timeNowUTC
 	user.UpdatedAt = timeNowUTC
 	if err := dbc.db.Create(user).Error; err != nil {
 		log.WithFields(log.Fields{"err": err.Error()}).Error("could not create user")
 
-		return err
+		return uuid.Nil, err
 	}
 
-	return nil
+	return user.ID, nil
 }
 
 func (dbc *DBClient) GetUserByEmail(email string) (bool, *models.User, error) {
@@ -61,4 +62,39 @@ func (dbc *DBClient) GetUserByEmail(email string) (bool, *models.User, error) {
 
 	return false, nil, result.Error
 
+}
+
+func (dbc *DBClient) GetUserByID(id uuid.UUID) (bool, *models.User, error) {
+
+	user := &models.User{}
+
+	result := dbc.db.Where("id=?", id).First(&user)
+	if result.Error != nil {
+		return true, user, nil
+	}
+	if result.Error == gorm.ErrRecordNotFound {
+		log.WithFields(log.Fields{"err": result.Error, "id": id.String()}).Info("could not find user")
+		return false, nil, nil
+	}
+
+	return false, nil, result.Error
+
+}
+
+func (dbc *DBClient) UpdateUserConfirmationToken(id uuid.UUID, confirmationToken string, tokenValidity time.Time) error {
+	result := dbc.db.Model(&models.User{}).Updates(models.User{ID: id, ConfirmationToken: confirmationToken, ConfirmationTokenValidity: tokenValidity})
+	if result.Error != nil {
+		log.WithFields(log.Fields{"err": result.Error, "user_id": id}).Error("error updating confirmation token")
+		return result.Error
+	}
+	return nil
+}
+
+func (dbc *DBClient) UpdateUserConfirmationMailSent(id uuid.UUID) error {
+	result := dbc.db.Model(&models.User{}).Where("id = ?", id).Update("confirmation_mail_sent", true)
+	if result.Error != nil {
+		log.WithFields(log.Fields{"err": result.Error, "user_id": id}).Error("error updating confirmation email sent status")
+		return result.Error
+	}
+	return nil
 }

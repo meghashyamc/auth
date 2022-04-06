@@ -44,7 +44,8 @@ func getMessageForValidationTag(fieldError validator.FieldError) string {
 		return fmt.Sprintf("the field does not meet the maximum length/value requirement: %s", fieldError.Param())
 	case "alpha":
 		return fmt.Sprintf("only alphabets are allowed for this field, so %s is not valid", fieldError.Value())
-
+	case "uuid4":
+		return fmt.Sprintf("the user_id %s sent is malformed", fieldError.Value())
 	}
 
 	return fieldError.Error()
