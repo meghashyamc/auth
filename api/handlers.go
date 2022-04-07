@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/gofrs/uuid"
 	"github.com/meghashyamc/auth/models"
@@ -95,8 +96,12 @@ func (l *HTTPListener) sendConfirmationMailHandler(w http.ResponseWriter, r *htt
 		writeResponse(w, http.StatusInternalServerError, false, []string{errSendingConfirmMail}, nil)
 		return
 	}
-
-	if err := email.Send(*user.Email, email.GetConfirmationEmailContent(confirmationLink)); err != nil {
+	emailContent, err := email.GetConfirmationEmailContent(*user.FirstName, confirmationLink)
+	if err != nil {
+		writeResponse(w, http.StatusInternalServerError, false, []string{errSendingConfirmMail}, nil)
+		return
+	}
+	if err := email.Send(*user.FirstName, *user.Email, os.Getenv("CONFIRMATION_EMAIL_SUBJECT"), emailContent); err != nil {
 		writeResponse(w, http.StatusInternalServerError, false, []string{errSendingConfirmMail}, nil)
 		return
 	}
